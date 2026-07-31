@@ -1,0 +1,474 @@
+from gpiozero import Button
+import os
+import smtplib
+from email.message import EmailMessage
+
+# This tells the Pi to listen to GPIO 17 (where the ESP32 wire is connected)
+trigger_pin = Button(17, pull_up=False) 
+
+def take_and_send_photo():
+    print("ESP32 Alert Received! Taking photo...")
+    
+    # 1. Capture the Image using the working camera
+    os.system("libcamera-jpeg -o alert_photo.jpg -t 1000 --width 1280 --height 720")
+    
+    # 2. Build the Email
+    msg = EmailMessage()
+    msg['Subject'] = 'EcoSentinel: SECURITY PHOTO ALERT!'
+    msg['To'] = 'purandaraboya@gmail.com' 
+    msg['From'] = 'purandaraboya@gmail.com' 
+    
+    msg.set_content('Sensor limits exceeded. Attached is the live camera feed.')
+    
+    # Attach the photo file
+    with open('alert_photo.jpg', 'rb') as img:
+        msg.add_attachment(img.read(), maintype='image', subtype='jpeg', filename='alert_photo.jpg')
+        
+    # 3. Send the Email
+    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+        smtp.login('purandaraboya@gmail.com', 'iyld suoi gsfv rkyf')
+        smtp.send_message(msg)
+    
+    print("Photo sent successfully. Waiting for next alert...")
+
+# Tell the Pi to run the function when the ESP32 sends a signal
+trigger_pin.when_pressed = take_and_send_photo
+
+print("EcoSentinel Pi Camera Armed... waiting for signal.")
+
+# Keep the program running forever
+from signal import pause
+pause()
+pio code
+
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <DHT.h>
+#include <ESP32Servo.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+
+#define DHTPIN 4
+#define DHTTYPE DHT11
+
+#define RAIN_PIN 34
+#define SOIL_PIN 32
+#define GAS_PIN 35
+
+#define TRIG_PIN 5
+#define ECHO_PIN 18
+
+#define BUZZER 26
+#define SERVO_PIN 13
+
+// --- RASPBERRY PI TRIGGER PIN ---
+#define PI_TRIGGER_PIN 14
+
+// --- WI-FI & CLOUD SETTINGS ---
+const char* ssid = "Boya";         
+const char* password = "sunny1961780"; 
+String webAppUrl = "https://script.google.com/macros/s/AKfycbyErbjEKr0grz6LJENdO_3fUOz1nP5hbxgmScjdKb0sLP-sjEaksn9nTuwc4BlftpQQ/exec";
+
+// --- DYNAMIC TIMING VARIABLES ---
+unsigned long previousMillis = 0;
+const long normalInterval = 120000; // 2 minutes
+const long alertInterval = 10000;   // 10 seconds
+long currentInterval = normalInterval; 
+bool wasAlerting = false; // Tracks if we are currently in an alert state
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+DHT dht(DHTPIN, DHTTYPE);
+Servo gateServo;
+
+float temperature, humidity;
+int rainValue, soilValue, gasValue;
+long duration;
+float distance;
+
+void startupScreen()
+{
+  // 1. Welcome Screen
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Welcome To");
+  lcd.setCursor(0, 1);
+  lcd.print("Neo Nexus 36.1");
+  delay(2500);
+
+  // 2. Project Title Screen
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Project:");
+  lcd.setCursor(0, 1);
+  lcd.print("EcoSentinel");
+  delay(2000);
+
+  // 3. Wi-Fi Connection Screen
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Connecting Wi-Fi");
+  lcd.setCursor(0, 1);
+  
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  lcd.print("Connected!");
+  delay(1500);
+
+  // 4. Sensor Check Screen
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Checking...");
+  delay(1000);
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Sensors OK");
+  lcd.setCursor(0, 1);
+  lcd.print("Ready");
+  delay(1500);
+}
+
+void readSensors()
+{
+  humidity = dht.readHumidity();
+  temperature = dht.readTemperature();
+
+  rainValue = analogRead(RAIN_PIN);
+  soilValue = analogRead(SOIL_PIN);
+  gasValue = analogRead(GAS_PIN);
+
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  duration = pulseIn(ECHO_PIN, HIGH);
+  distance = duration * 0.034 / 2;
+}
+
+void setup()
+{
+  Serial.begin(115200);
+
+  // Initialize the Raspberry Pi Trigger Pin
+  pinMode(PI_TRIGGER_PIN, OUTPUT);
+  digitalWrite(PI_TRIGGER_PIN, LOW);
+
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  pinMode(BUZZER, OUTPUT);
+  digitalWrite(BUZZER, LOW);
+
+  lcd.init();
+  lcd.backlight();
+
+  dht.begin();
+
+  gateServo.attach(SERVO_PIN);
+  gateServo.write(0);
+
+  startupScreen();
+}
+
+void displayPages()
+{
+  // Page 1
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("T:");
+  lcd.print(temperature, 1);
+  lcd.print((char)223);
+  lcd.print("C");
+
+  lcd.setCursor(10, 0);
+  lcd.print("H:");
+  lcd.print((int)humidity);
+  lcd.print("%");
+
+  lcd.setCursor(0, 1);
+  lcd.print("EcoSentinel");
+  delay(2500);
+
+  // Page 2
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Rain:");
+  lcd.print(rainValue);
+
+  lcd.setCursor(0, 1);
+  if (rainValue < 1800)
+    lcd.print("RAIN DETECTED");
+  else
+    lcd.print("NO RAIN");
+
+  delay(2500);
+
+  // Page 3
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Soil:");
+  lcd.print(soilValue);
+
+  lcd.setCursor(0, 1);
+  if (soilValue > 3000)
+    lcd.print("SOIL DRY");
+  else
+    lcd.print("SOIL MOIST");
+
+  delay(2500);
+
+  // Page 4
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Gas:");
+  lcd.print(gasValue);
+
+  lcd.setCursor(0, 1);
+  if (gasValue > 2000)
+    lcd.print("GAS ALERT");
+  else
+    lcd.print("AIR NORMAL");
+
+  delay(2500);
+
+  // Page 5
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Distance:");
+  lcd.print(distance, 0);
+  lcd.print("cm");
+
+  lcd.setCursor(0, 1);
+
+  if (distance < 30)
+    lcd.print("OBJECT FOUND");
+  else
+    lcd.print("CLEAR");
+
+  delay(2500);
+}
+
+void systemStatus()
+{
+  bool alert = false;
+  bool warning = false;
+
+  if (gasValue > 2000 || temperature > 36.0 || temperature < 18.0 || humidity > 80.0 || humidity < 30.0) 
+  {
+    alert = true;
+  }
+  if (distance < 30 || rainValue < 1800 || soilValue > 3000) 
+  {
+    warning = true;
+  }
+
+  lcd.clear();
+
+  if (alert)
+  {
+    lcd.setCursor(0, 0);
+    lcd.print("SYSTEM ALERT");
+    lcd.setCursor(0, 1);
+    
+    if (gasValue > 2000) {
+      lcd.print("VENTILATING...");
+      gateServo.write(90); 
+    } else {
+      lcd.print("CHECK NOW");
+    }
+
+    tone(BUZZER, 2200);
+    delay(300);
+    noTone(BUZZER);
+    delay(100);
+    tone(BUZZER, 2200);
+    delay(300);
+    noTone(BUZZER);
+  }
+  else if (warning)
+  {
+    lcd.setCursor(0, 0);
+    lcd.print("SYSTEM WARNING");
+    lcd.setCursor(0, 1);
+    
+    if (distance < 30) {
+      lcd.print("LOCKDOWN ACTIVE");
+      gateServo.write(180); 
+      
+      int beepDelay = map(distance, 0, 30, 50, 400); 
+      tone(BUZZER, 1500);
+      delay(100);
+      noTone(BUZZER);
+      delay(beepDelay);
+    } else {
+      lcd.print("CHECK SENSORS");
+      gateServo.write(0); 
+      tone(BUZZER, 1500);
+      delay(150);
+      noTone(BUZZER);
+    }
+  }
+  else
+  {
+    lcd.setCursor(0, 0);
+    lcd.print("SYSTEM SAFE");
+    lcd.setCursor(0, 1);
+    lcd.print("ALL OK");
+    
+    gateServo.write(0); 
+    noTone(BUZZER);
+  }
+  
+  delay(2000); 
+}
+
+void sendDataToCloud()
+{
+  if(WiFi.status() == WL_CONNECTED) {
+    bool limitsExceeded = (gasValue > 2000 || 
+                           temperature > 36.0 || temperature < 18.0 || 
+                           humidity > 80.0 || humidity < 30.0 || 
+                           distance < 30 || 
+                           rainValue < 1800 || 
+                           soilValue > 3000);
+                           
+    String alertStr = limitsExceeded ? "FALSE" : "TRUE";
+
+    String url = webAppUrl + 
+                 "?temp=" + String(temperature) + 
+                 "&hum=" + String(humidity) + 
+                 "&rain=" + String(rainValue) + 
+                 "&soil=" + String(soilValue) + 
+                 "&gas=" + String(gasValue) + 
+                 "&dist=" + String(distance) + 
+                 "&alert=" + alertStr;
+
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+
+    Serial.println("Sending data to Google Sheets...");
+    http.begin(client, url);
+    int httpResponseCode = http.GET();
+    
+    if (httpResponseCode > 0) {
+      Serial.print("Data logged successfully. HTTP Code: ");
+      Serial.println(httpResponseCode);
+    } else {
+      Serial.print("Error sending data. Code: ");
+      Serial.println(httpResponseCode);
+    }
+    http.end();
+  } else {
+    Serial.println("WiFi Disconnected. Cannot send data.");
+  }
+}
+
+void loop() 
+{
+  readSensors();
+  displayPages();
+  systemStatus();
+
+  // Evaluate if limits are currently exceeded
+  bool limitsExceeded = (gasValue > 2000 || temperature > 36.0 || temperature < 18.0 || 
+                         humidity > 80.0 || humidity < 30.0 || distance < 30 || 
+                         rainValue < 1800 || soilValue > 3000);
+
+  if (limitsExceeded) 
+  {
+    currentInterval = alertInterval; 
+    
+    if (!wasAlerting) {
+      sendDataToCloud(); 
+      
+      // TRIGGER THE RASPBERRY PI CAMERA
+      digitalWrite(PI_TRIGGER_PIN, HIGH);
+      delay(500); 
+      digitalWrite(PI_TRIGGER_PIN, LOW);
+      
+      previousMillis = millis(); 
+      wasAlerting = true;
+    }
+  } 
+  else 
+  {
+    currentInterval = normalInterval; 
+    
+    if (wasAlerting) {
+      wasAlerting = false;
+      previousMillis = millis(); 
+    }
+  }
+
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis >= currentInterval) {
+    previousMillis = currentMillis;
+    sendDataToCloud(); 
+  }
+}
+esp 32
+
+function generateTwoHourAIReport() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var data = sheet.getDataRange().getValues();
+  
+  var maxTemp = 0;
+  var minTemp = 100;
+  var maxGas = 0;
+  var totalAlerts = 0;
+  var rowsAnalyzed = 0;
+  
+  for (var i = 1; i < data.length; i++) {
+    rowsAnalyzed++;
+    var temp = parseFloat(data[i][1]);
+    var gas = parseInt(data[i][5]);
+    var alertState = data[i][7];
+    
+    if (temp > maxTemp) maxTemp = temp;
+    if (temp < minTemp) minTemp = temp;
+    if (gas > maxGas) maxGas = gas;
+    if (alertState === "FALSE") totalAlerts++; 
+  }
+  
+  if (rowsAnalyzed === 0) return;
+  
+  var prompt = "You are 'EcoSentinel', an environmental monitoring AI. Analyze this sensor data and provide a short report. " +
+               "Data: Max Temp=" + maxTemp + "C, Min Temp=" + minTemp + "C, Max Gas Level=" + maxGas + " (Safe is <2000), Total System Alerts Triggered=" + totalAlerts + ". " +
+               "Structure the report with: 1. A summary of the data. 2. Concerning trends. 3. Precautions the user should take.";
+               
+  var apiKey = "AQ.Ab8RN6KxO4Sv-8TFmBu4tMaYAWxplaQjhykLZyWFv1EgjL5ZjA"; 
+  var url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=" + apiKey;
+  
+  var payload = {
+    "contents": [{"parts":[{"text": prompt}]}]
+  };
+  
+  var options = {
+    "method": "post",
+    "contentType": "application/json",
+    "payload": JSON.stringify(payload),
+    "muteHttpExceptions": true
+  };
+  
+  var response = UrlFetchApp.fetch(url, options);
+  var json = JSON.parse(response.getContentText());
+  
+  try {
+    var aiReport = json.candidates[0].content.parts[0].text;
+    
+    // Writes the AI Report directly into a new row in your Google Sheet!
+    sheet.appendRow([new Date(), "AI_REPORT", maxTemp, minTemp, "", maxGas, "", "", aiReport]);
+    Logger.log("SUCCESS: AI Report written directly into your Google Sheet!");
+    
+  } catch (e) {
+    Logger.log("ERROR parsing AI response: " + response.getContentText());
+  }
+}
+sheet SSS
