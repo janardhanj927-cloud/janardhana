@@ -443,7 +443,7 @@ function generateTwoHourAIReport() {
                "Data: Max Temp=" + maxTemp + "C, Min Temp=" + minTemp + "C, Max Gas Level=" + maxGas + " (Safe is <2000), Total System Alerts Triggered=" + totalAlerts + ". " +
                "Structure the report with: 1. A summary of the data. 2. Concerning trends. 3. Precautions the user should take.";
                
-  var apiKey = "AQ.Ab8RN6KxO4Sv-8TFmBu4tMaYAWxplaQjhykLZyWFv1EgjL5ZjA"; 
+  var apiKey = "AA"; 
   var url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=" + apiKey;
   
   var payload = {
